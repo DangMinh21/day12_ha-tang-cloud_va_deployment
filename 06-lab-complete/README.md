@@ -1,100 +1,162 @@
-# Lab 12 — Complete Production Agent
+# Day 12 Lab — Production AI Agent
 
-Kết hợp TẤT CẢ những gì đã học trong 1 project hoàn chỉnh.
+> **AICB-P1 · VinUniversity 2026**
 
-## Checklist Deliverable
-
-- [x] Dockerfile (multi-stage, < 500 MB)
-- [x] docker-compose.yml (agent + redis)
-- [x] .dockerignore
-- [x] Health check endpoint (`GET /health`)
-- [x] Readiness endpoint (`GET /ready`)
-- [x] API Key authentication
-- [x] Rate limiting
-- [x] Cost guard
-- [x] Config từ environment variables
-- [x] Structured logging
-- [x] Graceful shutdown
-- [x] Public URL ready (Railway / Render config)
+| Thông tin | |
+| --- | --- |
+| **Họ và tên** | Đặng Văn Minh |
+| **MSSV** | 2A202600027 |
+| **Email** | minhdv0201@gmail.com |
+| **Ngày nộp** | 17/04/2026 |
+| **Public URL** | [dangvanminh-2a202600027-production.up.railway.app](https://dangvanminh-2a202600027-production.up.railway.app) |
+| **Platform** | Railway |
 
 ---
 
-## Cấu Trúc
+## Mô Tả Dự Án
 
-```
+Production-ready AI Agent kết hợp **tất cả** concepts từ Day 12:
+
+- **Containerization** — Multi-stage Dockerfile, image < 400 MB
+- **Cloud Deployment** — Deploy trên Railway với public URL
+- **API Security** — API Key authentication + Rate limiting + Cost guard
+- **Reliability** — Health/readiness probes, graceful shutdown
+- **Scalability** — Stateless design (Redis), Nginx load balancer
+
+Agent trả lời câu hỏi qua REST API, hỗ trợ conversation history, và có thể scale lên nhiều instances nhờ state được lưu trong Redis.
+
+---
+
+## Cấu Trúc Project
+
+```text
 06-lab-complete/
 ├── app/
-│   ├── main.py         # Entry point — kết hợp tất cả
-│   ├── config.py       # 12-factor config
-│   ├── auth.py         # API Key + JWT
-│   ├── rate_limiter.py # Rate limiting
-│   └── cost_guard.py   # Budget protection
-├── Dockerfile          # Multi-stage, production-ready
-├── docker-compose.yml  # Full stack
-├── railway.toml        # Deploy Railway
-├── render.yaml         # Deploy Render
-├── .env.example        # Template
+│   ├── main.py          # FastAPI app — kết hợp tất cả middleware
+│   ├── config.py        # 12-factor config (pydantic_settings)
+│   ├── auth.py          # API Key authentication
+│   ├── rate_limiter.py  # Sliding window rate limiter (Redis)
+│   └── cost_guard.py    # Monthly budget guard (Redis)
+├── utils/
+│   ├── mock_llm.py      # Mock LLM (không cần API key)
+│   └── real_llm.py      # OpenAI integration (optional)
+├── Screenshots/
+│   ├── dashboard_railway.png
+│   └── test_url.png
+├── Dockerfile           # Multi-stage build
+├── docker-compose.yml   # agent + redis + nginx
+├── nginx.conf           # Load balancer config
+├── railway.toml         # Railway deployment config
+├── render.yaml          # Render deployment config
+├── requirements.txt
+├── .env.example         # Template (không commit .env thật)
 ├── .dockerignore
-└── requirements.txt
+├── MISSION_ANSWERS.md   # Câu trả lời tất cả exercises
+├── DEPLOYMENT.md        # Thông tin deployment + test commands
+└── check_production_ready.py
 ```
 
 ---
 
-## Chạy Local
+## Hướng Dẫn Chấm Điểm
+
+### Kiểm tra public URL (nhanh nhất)
 
 ```bash
-# 1. Setup
-cp .env.example .env
+# 1. Health check
+curl https://dangvanminh-2a202600027-production.up.railway.app/health
 
-# 2. Chạy với Docker Compose
+# 2. Không có API key → phải trả về 401
+curl -X POST https://dangvanminh-2a202600027-production.up.railway.app/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Hello", "user_id": "test"}'
+
+# 3. Có API key → trả về 200
+curl -X POST https://dangvanminh-2a202600027-production.up.railway.app/ask \
+  -H "X-API-Key: my-secret-key-123" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is Docker?", "user_id": "grader"}'
+
+# 4. Rate limit — gọi 12 lần, lần 11+ phải trả về 429
+for i in {1..12}; do
+  echo -n "Request $i: "
+  curl -s -o /dev/null -w "%{http_code}" \
+    -X POST https://dangvanminh-2a202600027-production.up.railway.app/ask \
+    -H "X-API-Key: my-secret-key-123" \
+    -H "Content-Type: application/json" \
+    -d "{\"question\": \"test $i\", \"user_id\": \"ratetest\"}"
+  echo ""
+done
+```
+
+### Chạy local với Docker Compose
+
+```bash
+# 1. Clone và setup
+git clone <repo-url>
+cd 06-lab-complete
+cp .env.example .env.local
+
+# 2. Chạy full stack (agent + redis + nginx)
 docker compose up
 
-# 3. Test
+# 3. Test qua nginx (port 80)
 curl http://localhost/health
+curl http://localhost/ready
 
-# 4. Lấy API key từ .env, test endpoint
-API_KEY=$(grep AGENT_API_KEY .env | cut -d= -f2)
-curl -H "X-API-Key: $API_KEY" \
-     -X POST http://localhost/ask \
-     -H "Content-Type: application/json" \
-     -d '{"question": "What is deployment?"}'
-```
+curl -X POST http://localhost/ask \
+  -H "X-API-Key: my-secret-key-123" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Explain microservices", "user_id": "user1"}'
 
----
+# 4. Scale lên 3 instances
+docker compose up --scale agent=3
 
-## Deploy Railway (< 5 phút)
-
-```bash
-# Cài Railway CLI
-npm i -g @railway/cli
-
-# Login và deploy
-railway login
-railway init
-railway variables set OPENAI_API_KEY=sk-...
-railway variables set AGENT_API_KEY=your-secret-key
-railway up
-
-# Nhận public URL!
-railway domain
-```
-
----
-
-## Deploy Render
-
-1. Push repo lên GitHub
-2. Render Dashboard → New → Blueprint
-3. Connect repo → Render đọc `render.yaml`
-4. Set secrets: `OPENAI_API_KEY`, `AGENT_API_KEY`
-5. Deploy → Nhận URL!
-
----
-
-## Kiểm Tra Production Readiness
-
-```bash
+# 5. Chạy script kiểm tra tự động
 python check_production_ready.py
 ```
 
-Script này kiểm tra tất cả items trong checklist và báo cáo những gì còn thiếu.
+### Chat UI (demo trực quan)
+
+Truy cập trực tiếp trên trình duyệt:
+[https://dangvanminh-2a202600027-production.up.railway.app/chat](https://dangvanminh-2a202600027-production.up.railway.app/chat)
+
+---
+
+## Tính Năng Đã Implement
+
+| Tính năng | Implementation | File |
+| --- | --- | --- |
+| API Key Auth | `APIKeyHeader`, so sánh với env var | `app/auth.py` |
+| Rate Limiting | Sliding window, Redis sorted set, 10 req/min | `app/rate_limiter.py` |
+| Cost Guard | Monthly budget $10/user, Redis counter, reset đầu tháng | `app/cost_guard.py` |
+| Health probe | `GET /health` → 200 + uptime/version info | `app/main.py` |
+| Readiness probe | `GET /ready` → 200 khi sẵn sàng, 503 khi startup/shutdown | `app/main.py` |
+| Graceful shutdown | `SIGTERM` handler + `lifespan` context | `app/main.py` |
+| Stateless design | Conversation history lưu Redis, TTL 24h | `app/main.py` |
+| Structured logging | JSON format, không log secrets | `app/main.py` |
+| Multi-stage Docker | Builder stage + runtime stage, non-root user | `Dockerfile` |
+| Load balancing | Nginx round-robin → nhiều agent instances | `nginx.conf` |
+| Config management | `pydantic_settings`, tất cả đọc từ env vars | `app/config.py` |
+
+---
+
+## Environment Variables
+
+| Variable | Mô tả | Default |
+| --- | --- | --- |
+| `AGENT_API_KEY` | API key để authenticate | `my-secret-key-123` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379/0` |
+| `RATE_LIMIT_PER_MINUTE` | Số request tối đa/phút | `10` |
+| `DAILY_BUDGET_USD` | Budget tối đa/ngày | `5.0` |
+| `ENVIRONMENT` | `development` / `production` | `development` |
+| `OPENAI_API_KEY` | OpenAI key (optional, dùng mock nếu không có) | — |
+
+---
+
+## Screenshots
+
+| | |
+| --- | --- |
+| Railway Dashboard | ![Dashboard](Screenshots/dashboard_railway.png) |
+| Test kết quả | ![Test](Screenshots/test_url.png) |
